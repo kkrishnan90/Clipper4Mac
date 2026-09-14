@@ -10,6 +10,7 @@
 
 <p align="center">
   <a href="https://github.com/kkrishnan90/Clipper4Mac/actions/workflows/ci.yml"><img src="https://github.com/kkrishnan90/Clipper4Mac/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/kkrishnan90/Clipper4Mac/releases/latest"><img src="https://img.shields.io/github/v/release/kkrishnan90/Clipper4Mac?label=release" alt="Latest release"></a>
   <img src="https://img.shields.io/badge/macOS-14%2B-black" alt="macOS 14+">
   <img src="https://img.shields.io/badge/arch-arm64%20%7C%20x86__64-blue" alt="Universal">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT"></a>
@@ -19,11 +20,15 @@
 
 ## Install
 
+**Homebrew** (recommended):
+
 ```sh
-brew install --cask kkrishnan90/clipper/clipper
+brew install --cask kkrishnan90/clipper/clipper   # install
+brew upgrade --cask clipper                       # update to the latest release
+brew uninstall --zap --cask clipper               # remove the app and its history
 ```
 
-Or download `Clipper-<version>.dmg` from [Releases](https://github.com/kkrishnan90/Clipper4Mac/releases),
+**Direct download:** grab `Clipper-<version>.dmg` from the [latest release](https://github.com/kkrishnan90/Clipper4Mac/releases/latest),
 drag Clipper to Applications, and open it. Requires **macOS 14 Sonoma** or newer; runs natively on Apple Silicon and Intel.
 
 > **Unsigned builds.** Until the app ships with a Developer ID, macOS may say it "cannot be opened".
