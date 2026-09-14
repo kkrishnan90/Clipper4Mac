@@ -1,10 +1,10 @@
 # Homebrew cask for Clipper.
 #
-# Lives in the tap repo `kkrishnan90/homebrew-clipper` at `Casks/clipper4mac.rb`
+# Lives in the tap repo `kkrishnan90/homebrew-clipper4mac` at `Casks/clipper4mac.rb`
 # (this copy in the app repo is the source of truth; the release workflow
 # pushes it to the tap with the version/sha256 filled in).
 #
-#   brew install --cask kkrishnan90/clipper/clipper4mac
+#   brew install --cask kkrishnan90/clipper4mac/clipper4mac
 #
 cask "clipper4mac" do
   version "0.2.0"

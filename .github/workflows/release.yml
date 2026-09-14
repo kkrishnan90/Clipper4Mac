@@ -4,11 +4,11 @@ name: Release
 #   git tag v0.2.0 && git push origin v0.2.0
 #
 # Builds a universal (Apple Silicon + Intel) Clipper-<version>.dmg, publishes
-# a GitHub Release, then updates the Homebrew tap (kkrishnan90/homebrew-clipper)
-# so `brew install --cask kkrishnan90/clipper/clipper4mac` picks it up.
+# a GitHub Release, then updates the Homebrew tap (kkrishnan90/homebrew-clipper4mac)
+# so `brew install --cask kkrishnan90/clipper4mac/clipper4mac` picks it up.
 #
 # Secrets:
-#   HOMEBREW_TAP_TOKEN  – fine-grained PAT with contents:write on homebrew-clipper
+#   HOMEBREW_TAP_TOKEN  – fine-grained PAT with contents:write on homebrew-clipper4mac
 #   Optional Developer ID signing + notarisation (see docs/RELEASING.md):
 #   APPLE_CERTIFICATE (base64 .p12), APPLE_CERTIFICATE_PASSWORD, KEYCHAIN_PASSWORD,
 #   APPLE_SIGNING_IDENTITY ("Developer ID Application: …"),
@@ -102,7 +102,7 @@ jobs:
           body: |
             ### Install
             ```sh
-            brew install --cask kkrishnan90/clipper/clipper4mac
+            brew install --cask kkrishnan90/clipper4mac/clipper4mac
             ```
             or download `Clipper-${{ steps.meta.outputs.version }}.dmg` below and drag Clipper to Applications.
             If the build is not notarized, run `xattr -cr /Applications/Clipper.app` once.
@@ -144,7 +144,7 @@ jobs:
           TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
           test -n "$TOKEN" || { echo "HOMEBREW_TAP_TOKEN not set – skipping tap update"; exit 0; }
-          git clone "https://x-access-token:${TOKEN}@github.com/kkrishnan90/homebrew-clipper.git" tap
+          git clone "https://x-access-token:${TOKEN}@github.com/kkrishnan90/homebrew-clipper4mac.git" tap
           mkdir -p tap/Casks
           cp clipper4mac.rb tap/Casks/clipper4mac.rb
           cd tap

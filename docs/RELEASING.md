@@ -4,12 +4,12 @@
 
 1. Create the GitHub repos:
    - `kkrishnan90/Clipper4Mac` – this code.
-   - `kkrishnan90/homebrew-clipper` – the tap. It only needs `Casks/clipper4mac.rb`
+   - `kkrishnan90/homebrew-clipper4mac` – the tap. It only needs `Casks/clipper4mac.rb`
      (copy `packaging/homebrew/Casks/clipper4mac.rb` there for the first release;
      the workflow keeps it updated afterwards).
 2. In `kkrishnan90/Clipper4Mac` → Settings → Secrets → Actions, add
    `HOMEBREW_TAP_TOKEN`: a fine-grained PAT with **Contents: Read & write** on
-   `homebrew-clipper` only.
+   `homebrew-clipper4mac` only.
 3. (Optional – removes the `xattr -cr` step and the Accessibility re-prompt on
    every update.) Apple Developer ID: export your *Developer ID Application*
    certificate as `.p12`, then add `APPLE_CERTIFICATE` (base64 of the p12),

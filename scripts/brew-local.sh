@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 # Build Clipper locally and install it through Homebrew, without a published
-# release. Creates a *local* tap named kkrishnan90/clipper (same name as the
+# release. Creates a *local* tap named kkrishnan90/clipper4mac (same name as the
 # future GitHub tap) whose cask points at the local DMG via file://, so the
 # install command is identical to the public one:
 #
-#   brew install --cask kkrishnan90/clipper/clipper4mac
+#   brew install --cask kkrishnan90/clipper4mac/clipper4mac
 #
 #   scripts/brew-local.sh                # build DMG (native arch) → brew install
 #   scripts/brew-local.sh --skip-build   # reuse dist/Clipper-<v>.dmg
 #
 # `brew uninstall|reinstall|zap --cask clipper4mac` work as usual. To switch to the
-# published tap later: `brew untap kkrishnan90/clipper` then install again.
+# published tap later: `brew untap kkrishnan90/clipper4mac` then install again.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -22,8 +22,8 @@ DMG="$PWD/dist/Clipper-$VERSION.dmg"
 [[ -f "$DMG" ]] || { echo "missing $DMG"; exit 1; }
 SHA=$(shasum -a 256 "$DMG" | cut -d' ' -f1)
 
-TAP=kkrishnan90/clipper
-TAP_DIR="$(brew --repository)/Library/Taps/kkrishnan90/homebrew-clipper"
+TAP=kkrishnan90/clipper4mac
+TAP_DIR="$(brew --repository)/Library/Taps/kkrishnan90/homebrew-clipper4mac"
 if [[ ! -d "$TAP_DIR" ]]; then
   echo "▸ brew tap-new $TAP (local)"
   brew tap-new --no-git "$TAP" >/dev/null

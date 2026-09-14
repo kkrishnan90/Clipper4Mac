@@ -23,12 +23,12 @@
 **Homebrew** (recommended):
 
 ```sh
-brew tap kkrishnan90/clipper
+brew tap kkrishnan90/clipper4mac
 brew install --cask clipper4mac
 ```
 
 Later: `brew upgrade --cask clipper4mac` to update, `brew uninstall --zap --cask clipper4mac` to remove the app and its history.
-(One-liner without tapping first: `brew install --cask kkrishnan90/clipper/clipper4mac`.)
+(One-liner without tapping first: `brew install --cask kkrishnan90/clipper4mac/clipper4mac`.)
 
 **Direct download:** grab `Clipper-<version>.dmg` from the [latest release](https://github.com/kkrishnan90/Clipper4Mac/releases/latest),
 drag Clipper to Applications, and open it. Requires **macOS 14 Sonoma** or newer; runs natively on Apple Silicon and Intel.
@@ -131,7 +131,7 @@ crates/clipper-core     engine: ingest, history, redb store, blob store, search,
 crates/clipper-ffi      UniFFI façade exported to Swift (static library)
 crates/uniffi-bindgen   the bindings generator binary
 macos/                  SwiftPM package: the app (AppKit + SwiftUI)
-packaging/homebrew      the cask (mirrored to kkrishnan90/homebrew-clipper on release)
+packaging/homebrew      the cask (mirrored to kkrishnan90/homebrew-clipper4mac on release)
 scripts/                build-macos.sh · brew-local.sh · gen-icons.sh · check-macos-on-linux.sh
 ```
 
