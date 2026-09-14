@@ -4,12 +4,12 @@
 # future GitHub tap) whose cask points at the local DMG via file://, so the
 # install command is identical to the public one:
 #
-#   brew install --cask kkrishnan90/clipper/clipper
+#   brew install --cask kkrishnan90/clipper/clipper4mac
 #
 #   scripts/brew-local.sh                # build DMG (native arch) → brew install
 #   scripts/brew-local.sh --skip-build   # reuse dist/Clipper-<v>.dmg
 #
-# `brew uninstall|reinstall|zap --cask clipper` work as usual. To switch to the
+# `brew uninstall|reinstall|zap --cask clipper4mac` work as usual. To switch to the
 # published tap later: `brew untap kkrishnan90/clipper` then install again.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -36,10 +36,10 @@ sed -e "s/^  version \".*\"/  version \"${VERSION}\"/" \
     -e "s|^  url \".*\",\$|  url \"file://${DMG}\"|" \
     -e '/^      verified: /d' \
     -e '/^  livecheck do/,/^  end/d' \
-    packaging/homebrew/Casks/clipper.rb > "$TAP_DIR/Casks/clipper.rb"
+    packaging/homebrew/Casks/clipper4mac.rb > "$TAP_DIR/Casks/clipper4mac.rb"
 
 echo "▸ brew install --cask $TAP/clipper"
-brew uninstall --cask clipper >/dev/null 2>&1 || true
+brew uninstall --cask clipper4mac >/dev/null 2>&1 || true
 brew install --cask "$TAP/clipper"
 open -a Clipper
-echo "✓ installed via Homebrew (local tap $TAP). Manage with: brew {list|reinstall|uninstall|zap} --cask clipper"
+echo "✓ installed via Homebrew (local tap $TAP). Manage with: brew {list|reinstall|uninstall|zap} --cask clipper4mac"

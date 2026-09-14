@@ -4,8 +4,8 @@
 
 1. Create the GitHub repos:
    - `kkrishnan90/Clipper4Mac` – this code.
-   - `kkrishnan90/homebrew-clipper` – the tap. It only needs `Casks/clipper.rb`
-     (copy `packaging/homebrew/Casks/clipper.rb` there for the first release;
+   - `kkrishnan90/homebrew-clipper` – the tap. It only needs `Casks/clipper4mac.rb`
+     (copy `packaging/homebrew/Casks/clipper4mac.rb` there for the first release;
      the workflow keeps it updated afterwards).
 2. In `kkrishnan90/Clipper4Mac` → Settings → Secrets → Actions, add
    `HOMEBREW_TAP_TOKEN`: a fine-grained PAT with **Contents: Read & write** on
@@ -36,9 +36,9 @@ The **Release** workflow then:
 1. runs the engine tests,
 2. builds `Clipper-0.2.1.dmg` (arm64 + x86_64) on `macos-15` / Xcode 16.2,
 3. creates GitHub Release `v0.2.1` with the DMG attached,
-4. computes the sha256 and pushes an updated `Casks/clipper.rb` to the tap.
+4. computes the sha256 and pushes an updated `Casks/clipper4mac.rb` to the tap.
 
-Users get it with `brew upgrade --cask clipper`.
+Users get it with `brew upgrade --cask clipper4mac`.
 
 ## Local build (no CI)
 
@@ -62,14 +62,14 @@ scripts/build-macos.sh --debug             # fast iteration; app in dist/
 
 To publish a local DMG manually: upload it to a GitHub Release named
 `v<version>`, then in the tap set `version` and `sha256`
-(`shasum -a 256 dist/Clipper-<v>.dmg`) in `Casks/clipper.rb`.
+(`shasum -a 256 dist/Clipper-<v>.dmg`) in `Casks/clipper4mac.rb`.
 
 ## Testing the cask before publishing
 
 ```sh
-brew install --cask ./packaging/homebrew/Casks/clipper.rb   # after filling in sha256
+brew install --cask ./packaging/homebrew/Casks/clipper4mac.rb   # after filling in sha256
 brew audit --cask --strict clipper
-brew style packaging/homebrew/Casks/clipper.rb
+brew style packaging/homebrew/Casks/clipper4mac.rb
 ```
 
 ## Checking from Linux

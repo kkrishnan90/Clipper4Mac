@@ -23,10 +23,12 @@
 **Homebrew** (recommended):
 
 ```sh
-brew install --cask kkrishnan90/clipper/clipper   # install
-brew upgrade --cask clipper                       # update to the latest release
-brew uninstall --zap --cask clipper               # remove the app and its history
+brew tap kkrishnan90/clipper
+brew install --cask clipper4mac
 ```
+
+Later: `brew upgrade --cask clipper4mac` to update, `brew uninstall --zap --cask clipper4mac` to remove the app and its history.
+(One-liner without tapping first: `brew install --cask kkrishnan90/clipper/clipper4mac`.)
 
 **Direct download:** grab `Clipper-<version>.dmg` from the [latest release](https://github.com/kkrishnan90/Clipper4Mac/releases/latest),
 drag Clipper to Applications, and open it. Requires **macOS 14 Sonoma** or newer; runs natively on Apple Silicon and Intel.
