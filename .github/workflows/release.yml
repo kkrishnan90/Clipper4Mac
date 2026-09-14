@@ -1,0 +1,155 @@
+name: Release
+
+# Tag a version to ship it:
+#   git tag v0.2.0 && git push origin v0.2.0
+#
+# Builds a universal (Apple Silicon + Intel) Clipper-<version>.dmg, publishes
+# a GitHub Release, then updates the Homebrew tap (kkrishnan90/homebrew-clipper)
+# so `brew install --cask kkrishnan90/clipper/clipper` picks it up.
+#
+# Secrets:
+#   HOMEBREW_TAP_TOKEN  – fine-grained PAT with contents:write on homebrew-clipper
+#   Optional Developer ID signing + notarisation (see docs/RELEASING.md):
+#   APPLE_CERTIFICATE (base64 .p12), APPLE_CERTIFICATE_PASSWORD, KEYCHAIN_PASSWORD,
+#   APPLE_SIGNING_IDENTITY ("Developer ID Application: …"),
+#   APPLE_ID, APPLE_APP_PASSWORD, APPLE_TEAM_ID
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build universal DMG
+    runs-on: macos-15
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read version from Cargo.toml
+        id: meta
+        run: echo "version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)" >> "$GITHUB_OUTPUT"
+
+      - name: Verify tag matches Cargo.toml
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          test "v${{ steps.meta.outputs.version }}" = "${GITHUB_REF_NAME}" \
+            || { echo "Tag ${GITHUB_REF_NAME} != v${{ steps.meta.outputs.version }}"; exit 1; }
+
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: "16.2"
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Engine tests
+        run: cargo test --workspace --locked
+
+      - name: Install ImageMagick (app icon)
+        run: brew install imagemagick
+
+      - name: Render AppIcon.icns
+        run: scripts/gen-icons.sh
+
+      # Optional Developer ID signing. Without the secrets the build is ad-hoc
+      # signed and the cask strips quarantine on install.
+      - name: Import signing certificate
+        if: env.APPLE_CERTIFICATE != ''
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          echo "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security import certificate.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
+          rm certificate.p12
+
+      - name: Store notarization credentials
+        if: env.APPLE_ID != ''
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          xcrun notarytool store-credentials clipper-notary \
+            --apple-id "$APPLE_ID" --password "$APPLE_APP_PASSWORD" --team-id "$APPLE_TEAM_ID"
+          echo "NOTARY_PROFILE=clipper-notary" >> "$GITHUB_ENV"
+
+      - name: Build universal app + DMG
+        env:
+          CODESIGN_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY || '-' }}
+        run: scripts/build-macos.sh --universal --dmg
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          name: "Clipper v${{ steps.meta.outputs.version }}"
+          files: dist/Clipper-${{ steps.meta.outputs.version }}.dmg
+          body: |
+            ### Install
+            ```sh
+            brew install --cask kkrishnan90/clipper/clipper
+            ```
+            or download `Clipper-${{ steps.meta.outputs.version }}.dmg` below and drag Clipper to Applications.
+            If the build is not notarized, run `xattr -cr /Applications/Clipper.app` once.
+
+            Requires macOS 14 Sonoma or newer. Grant Accessibility access when asked so Clipper can paste for you.
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Clipper-dmg
+          path: dist/*.dmg
+          if-no-files-found: error
+
+  homebrew:
+    name: Update Homebrew tap
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download DMG
+        uses: actions/download-artifact@v4
+        with:
+          name: Clipper-dmg
+          path: dmg
+
+      - name: Render cask
+        run: |
+          VERSION="${{ needs.build.outputs.version }}"
+          SHA=$(shasum -a 256 "dmg/Clipper-${VERSION}.dmg" | cut -d' ' -f1)
+          sed -e "s/^  version \".*\"/  version \"${VERSION}\"/" \
+              -e "s/^  sha256 \".*\"/  sha256 \"${SHA}\"/" \
+              packaging/homebrew/Casks/clipper.rb > clipper.rb
+          cat clipper.rb
+
+      - name: Push to tap
+        env:
+          TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          test -n "$TOKEN" || { echo "HOMEBREW_TAP_TOKEN not set – skipping tap update"; exit 0; }
+          git clone "https://x-access-token:${TOKEN}@github.com/kkrishnan90/homebrew-clipper.git" tap
+          mkdir -p tap/Casks
+          cp clipper.rb tap/Casks/clipper.rb
+          cd tap
+          git config user.name "clipper-release-bot"
+          git config user.email "clipper-release-bot@users.noreply.github.com"
+          git add Casks/clipper.rb
+          git commit -m "clipper ${{ needs.build.outputs.version }}" || echo "nothing to commit"
+          git push

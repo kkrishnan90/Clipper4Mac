@@ -1,0 +1,19 @@
+# Rust
+/target
+**/*.rs.bk
+
+# macOS app build outputs
+/dist
+/macos/.build
+/macos/.swiftpm
+/macos/Libs/*.a
+/macos/Sources/ClipperCore/ClipperCore.swift
+/macos/Sources/ClipperCoreFFI/include/ClipperCoreFFI.h
+
+# macOS
+.DS_Store
+
+# editors
+.idea
+.vscode/*
+!.vscode/extensions.json

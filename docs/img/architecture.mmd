@@ -1,0 +1,49 @@
+flowchart TB
+    classDef swift fill:#eef2ff,stroke:#4f46e5,color:#1e1b4b
+    classDef rust fill:#fff7ed,stroke:#ea580c,color:#431407
+    classDef disk fill:#f0fdf4,stroke:#16a34a,color:#052e16
+    classDef sys fill:#f8fafc,stroke:#64748b,color:#0f172a,stroke-dasharray:4 3
+
+    subgraph macOS["macOS"]
+        PB[("NSPasteboard")]:::sys
+        APP["Frontmost app"]:::sys
+    end
+
+    subgraph Swift["Clipper.app — Swift · AppKit · SwiftUI"]
+        SI["NSStatusItem<br/>menu-bar icon"]:::swift
+        HK["Global hotkey ⇧⌘V<br/>KeyboardShortcuts"]:::swift
+        FP["FloatingPanel<br/>non-activating NSPanel"]:::swift
+        UI["ContentView<br/>search · rows · footer · preview"]:::swift
+        CS["CoreService"]:::swift
+        CW["ClipboardWatcher<br/>changeCount poll · 500 ms"]:::swift
+        PS["Paster<br/>write flavours · CGEvent ⌘V"]:::swift
+    end
+
+    subgraph Rust["Rust engine — static library"]
+        FFI["clipper-ffi<br/>UniFFI façade"]:::rust
+        CORE["clipper-core<br/>ingest · history · search · thumbs"]:::rust
+    end
+
+    subgraph Disk["~/Library/Application Support/Clipper"]
+        DB[("history.redb<br/>copy-on-write index")]:::disk
+        BL[("blobs/<br/>BLAKE3 content-addressed")]:::disk
+    end
+
+    SI -- click --> FP
+    HK --> FP
+    FP --> UI
+    UI <--> CS
+    PB -- "every flavour<br/>of every item" --> CW
+    CW -- Snapshot --> CS
+    CS -- "PasteContent<br/>all flavours" --> PS
+    PS -- "setData(forType:)" --> PB
+    PS -- "⌘V" --> APP
+    CS <-- UniFFI --> FFI
+    FFI --> CORE
+    CORE --> DB
+    CORE --> BL
+
+    style macOS fill:#ffffff,stroke:#94a3b8
+    style Swift fill:#fafaff,stroke:#4f46e5
+    style Rust fill:#fffdf9,stroke:#ea580c
+    style Disk fill:#f9fefb,stroke:#16a34a

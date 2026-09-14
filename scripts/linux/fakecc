@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Stub C compiler for `cargo check --target aarch64-apple-darwin` on Linux:
+# emits an empty Mach-O object so build scripts succeed (nothing is linked).
+out=""
+args=("$@")
+for ((i=0; i<${#args[@]}; i++)); do
+  case "${args[$i]}" in
+    -\?) exit 1;;   # not clang-cl
+    -o) out="${args[$((i+1))]}";;
+    -Fo*) out="${args[$i]#-Fo}";;
+    -E|--version|-dumpmachine|-print-*|-dM) exec /usr/bin/clang -target arm64-apple-darwin "$@";;
+  esac
+done
+[[ -n "$out" ]] || exit 0
+/usr/bin/clang -target arm64-apple-darwin -x c -c /dev/null -o "$out"

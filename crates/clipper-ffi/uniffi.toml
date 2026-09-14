@@ -1,0 +1,6 @@
+[bindings.swift]
+# Swift module the app imports; the C module the Swift code sits on top of.
+module_name = "ClipperCore"
+ffi_module_name = "ClipperCoreFFI"
+# Records are value types; let Swift mutate copies (`var q = ListQuery(...)`).
+generate_immutable_records = false

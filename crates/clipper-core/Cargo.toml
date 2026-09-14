@@ -1,0 +1,23 @@
+[package]
+name = "clipper-core"
+description = "Platform-agnostic clipboard history engine for Clipper: storage, dedup, search, thumbnails."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+log = { workspace = true }
+thiserror = { workspace = true }
+parking_lot = { workspace = true }
+base64 = { workspace = true }
+redb = "4"
+blake3 = "1"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp", "tiff"] }
+
+[dev-dependencies]
+tempfile = "3"

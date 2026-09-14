@@ -1,0 +1,33 @@
+[package]
+name = "clipper-ffi"
+description = "UniFFI bridge exposing clipper-core to the Swift macOS app."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lib]
+# The Swift app links the static library; the dylib exists so that
+# `uniffi-bindgen generate --library` can read the embedded metadata.
+crate-type = ["staticlib", "cdylib", "rlib"]
+name = "clipper_ffi"
+
+[dependencies]
+clipper-core = { path = "../clipper-core" }
+uniffi = { workspace = true }
+log = { workspace = true }
+parking_lot = { workspace = true }
+thiserror = { workspace = true }
+oslog = { version = "0.2", optional = true }
+
+[features]
+default = []
+# Route `log` output to the unified logging system (Console.app) on macOS.
+oslog = ["dep:oslog"]
+
+[dev-dependencies]
+tempfile = "3"
+image = { version = "0.25", default-features = false, features = ["png"] }
