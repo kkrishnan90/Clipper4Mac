@@ -24,12 +24,22 @@ pub struct History {
     data_dir: PathBuf,
 }
 
+/// Maximum total blob bytes retained in memory for single-step Undo Delete.
+const UNDO_MAX_BLOB_BYTES: usize = 16 * 1024 * 1024;
+
+struct DeletedStash {
+    item: Item,
+    /// Blob payloads captured before disk GC so undo can recreate them.
+    blobs: Vec<(String, Vec<u8>)>,
+}
+
 struct Inner {
     store: Store,
     items: Vec<Item>,
     by_hash: HashMap<String, u64>,
     max_items: u32,
     opts: IngestOptions,
+    last_deleted: Option<DeletedStash>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -141,6 +151,7 @@ impl History {
             by_hash,
             max_items: settings.max_items,
             opts: settings.ingest_options(),
+            last_deleted: None,
         };
         let evicted = inner.enforce_cap()?;
         let h = History {
@@ -149,8 +160,13 @@ impl History {
             data_dir: data_dir.to_path_buf(),
         };
         h.remove_orphan_blobs_for(&evicted);
-        h.sweep_orphan_blobs();
         Ok(h)
+    }
+
+    /// Sweeps any unreferenced blob files from disk. Call from a background
+    /// queue after startup so app launch stays instant.
+    pub fn sweep_orphans(&self) {
+        self.sweep_orphan_blobs();
     }
 
     pub fn data_dir(&self) -> &Path {
@@ -208,8 +224,7 @@ impl History {
                     return Ok(Some(ItemSummary::from(&snapshot)));
                 }
             }
-            item.id = g.store.next_id()?;
-            g.store.put(&item)?;
+            g.store.put_new(&mut item)?;
             g.by_hash.insert(item.hash.clone(), item.id);
             summary = ItemSummary::from(&item);
             g.items.push(item);
@@ -222,21 +237,21 @@ impl History {
 
     pub fn list(&self, q: &ListQuery) -> ListResult {
         let g = self.inner.lock();
-        let query = q.query.trim();
+        let prepared = search::PreparedQuery::new(&q.query);
         let mut scored: Vec<(i32, &Item)> = g
             .items
             .iter()
             .filter(|i| q.kind.map_or(true, |k| i.kind == k))
             .filter(|i| !q.pinned_only || i.pinned)
             .filter_map(|i| {
-                if query.is_empty() {
+                if prepared.is_empty() {
                     return Some((0, i));
                 }
-                let body = inline_text(i);
-                search::score(query, &search::haystack(i, body)).map(|s| (s, i))
+                let body = searchable_text(i);
+                prepared.score(&search::haystack(i, body)).map(|s| (s, i))
             })
             .collect();
-        if !query.is_empty() {
+        if !prepared.is_empty() {
             scored.sort_by(|a, b| {
                 b.0.cmp(&a.0)
                     .then(b.1.last_copied_at.cmp(&a.1.last_copied_at))
@@ -437,14 +452,85 @@ impl History {
             g.store.delete(id)?;
             it
         };
-        self.remove_orphan_blobs_for(&[removed]);
+
+        // Snapshot any referenced blobs (up to UNDO_MAX_BLOB_BYTES) into memory
+        // BEFORE removing orphaned files on disk, so single-step Undo Delete
+        // works cleanly without holding stale files on disk.
+        let mut stashed_blobs = Vec::new();
+        let mut stash_bytes = 0usize;
+        let mut can_stash = true;
+        let mut seen_hashes = HashSet::new();
+        for h in removed.blob_hashes() {
+            if !seen_hashes.insert(h) {
+                continue;
+            }
+            if let Ok(data) = self.blobs.get(h) {
+                stash_bytes = stash_bytes.saturating_add(data.len());
+                if stash_bytes > UNDO_MAX_BLOB_BYTES {
+                    can_stash = false;
+                    break;
+                }
+                stashed_blobs.push((h.to_string(), data));
+            } else {
+                can_stash = false;
+                break;
+            }
+        }
+
+        self.remove_orphan_blobs_for(std::slice::from_ref(&removed));
+
+        {
+            let mut g = self.inner.lock();
+            g.last_deleted = if can_stash {
+                Some(DeletedStash {
+                    item: removed,
+                    blobs: stashed_blobs,
+                })
+            } else {
+                None
+            };
+        }
         Ok(())
+    }
+
+    /// Restores the most recently deleted item (if any), rewriting its blobs
+    /// and re-inserting it into the database.
+    pub fn undo_delete(&self) -> Result<Option<ItemSummary>> {
+        let stash = {
+            let mut g = self.inner.lock();
+            g.last_deleted.take()
+        };
+        let Some(stash) = stash else {
+            return Ok(None);
+        };
+        for (_hash, bytes) in &stash.blobs {
+            self.blobs.put(bytes)?;
+        }
+        let item = stash.item;
+        let evicted;
+        let summary;
+        {
+            let mut g = self.inner.lock();
+            // If an identical item was re-copied in the meantime, drop the undo.
+            if g.by_hash.contains_key(&item.hash) {
+                return Ok(None);
+            }
+            g.store.put(&item)?;
+            g.by_hash.insert(item.hash.clone(), item.id);
+            summary = ItemSummary::from(&item);
+            g.items.push(item);
+            sort_items(&mut g.items);
+            evicted = g.enforce_cap()?;
+        }
+        self.remove_orphan_blobs_for(&evicted);
+        Ok(Some(summary))
     }
 
     /// Removes all (or all unpinned) items. Returns how many were removed.
     pub fn clear(&self, keep_pinned: bool) -> Result<usize> {
         let removed = {
             let mut g = self.inner.lock();
+            g.last_deleted = None;
             let (keep, drop): (Vec<Item>, Vec<Item>) = std::mem::take(&mut g.items)
                 .into_iter()
                 .partition(|i| keep_pinned && i.pinned);
@@ -460,12 +546,21 @@ impl History {
     }
 
     pub fn stats(&self) -> HistoryStats {
-        let g = self.inner.lock();
+        let (items, pinned, db_bytes) = {
+            let g = self.inner.lock();
+            (
+                g.items.len(),
+                g.items.iter().filter(|i| i.pinned).count(),
+                g.store.file_size(),
+            )
+        };
+        // Walk the blobs directory outside the mutex so reads/writes aren't blocked.
+        let blob_bytes = self.blobs.disk_usage();
         HistoryStats {
-            items: g.items.len(),
-            pinned: g.items.iter().filter(|i| i.pinned).count(),
-            db_bytes: g.store.file_size(),
-            blob_bytes: self.blobs.disk_usage(),
+            items,
+            pinned,
+            db_bytes,
+            blob_bytes,
             data_dir: self.data_dir.display().to_string(),
         }
     }
@@ -562,12 +657,13 @@ impl Inner {
     }
 }
 
-/// Text body for search when the payload is stored inline (cheap; no I/O).
-fn inline_text(item: &Item) -> Option<&str> {
+/// Text body for search when available in memory (inline payload, or the
+/// bounded excerpt preserved for large blob-backed text items).
+fn searchable_text(item: &Item) -> Option<&str> {
     match (&item.kind, &item.payload) {
         (ItemKind::Image, _) => None,
         (_, PayloadRef::Inline { data }) => std::str::from_utf8(data).ok(),
-        _ => None,
+        _ => item.search_excerpt.as_deref(),
     }
 }
 
@@ -743,5 +839,47 @@ mod tests {
         let r = h.list(&ListQuery::default());
         assert_eq!(r.total, 1);
         assert_eq!(r.items[0].title, "fine");
+    }
+
+    #[test]
+    fn undo_delete_restores_blob_item_and_preserves_pin() {
+        let dir = tempfile::tempdir().unwrap();
+        let h = open(dir.path(), 100);
+        let payload = format!("header\n{}\nfind-me-in-blob", "a".repeat(40_000));
+        let item = h.ingest(text_snap(&payload)).unwrap().unwrap();
+        // Large text should be searchable via search_excerpt!
+        let found = h.list(&ListQuery {
+            query: "header".into(),
+            ..Default::default()
+        });
+        assert_eq!(found.total, 1);
+        // byte_size should not be double-counted.
+        assert_eq!(item.byte_size, payload.len() as u64);
+
+        h.set_pinned(item.id, true).unwrap();
+        h.delete(item.id).unwrap();
+        assert_eq!(h.list(&ListQuery::default()).total, 0);
+        assert_eq!(h.stats().blob_bytes, 0, "disk blob cleaned immediately");
+
+        let restored = h.undo_delete().unwrap().expect("should restore deleted item");
+        assert_eq!(restored.id, item.id);
+        assert!(restored.pinned);
+        assert_eq!(h.list(&ListQuery::default()).total, 1);
+        let p = h.paste_content(restored.id, false).unwrap();
+        assert_eq!(p.plain_text().as_deref(), Some(payload.as_str()));
+        // Second undo is a no-op.
+        assert!(h.undo_delete().unwrap().is_none());
+    }
+
+    #[test]
+    fn diacritic_insensitive_search() {
+        let dir = tempfile::tempdir().unwrap();
+        let h = open(dir.path(), 100);
+        h.ingest(text_snap("Café Résumé")).unwrap();
+        let r = h.list(&ListQuery {
+            query: "cafe resume".into(),
+            ..Default::default()
+        });
+        assert_eq!(r.total, 1);
     }
 }

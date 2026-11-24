@@ -191,6 +191,9 @@ pub struct Item {
     /// Small PNG thumbnail (≤ ~320px) for images / image files.
     #[serde(default, with = "b64_opt", skip_serializing_if = "Option::is_none")]
     pub thumbnail: Option<Vec<u8>>,
+    /// Bounded searchable text excerpt for large blob-backed text items (> inline_limit).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub search_excerpt: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub image: Option<ImageMeta>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -237,9 +240,8 @@ pub struct ItemSummary {
     pub id: u64,
     pub kind: ItemKind,
     pub title: String,
-    /// `data:image/png;base64,…` for images.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub thumbnail: Option<String>,
+    /// True if a thumbnail PNG is available via [`History::thumbnail_png`].
+    pub has_thumbnail: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub image: Option<ImageMeta>,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
@@ -262,17 +264,11 @@ pub struct ItemSummary {
 
 impl From<&Item> for ItemSummary {
     fn from(it: &Item) -> Self {
-        use base64::Engine;
         ItemSummary {
             id: it.id,
             kind: it.kind,
             title: it.title.clone(),
-            thumbnail: it.thumbnail.as_ref().map(|t| {
-                format!(
-                    "data:image/png;base64,{}",
-                    base64::engine::general_purpose::STANDARD.encode(t)
-                )
-            }),
+            has_thumbnail: it.thumbnail.is_some(),
             image: it.image.clone(),
             files: it.files.clone(),
             color: it.color.clone(),

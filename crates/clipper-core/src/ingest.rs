@@ -233,6 +233,7 @@ fn base_item(kind: ItemKind, title: String, payload: PayloadRef, hash: String) -
         payload,
         representations: Vec::new(),
         thumbnail: None,
+        search_excerpt: None,
         image: None,
         files: Vec::new(),
         color: None,
@@ -331,11 +332,27 @@ pub fn build_item(snap: Snapshot, blobs: &BlobStore, opts: &IngestOptions) -> Re
     // never have to touch the raw flavours.
     let primary = std::mem::replace(&mut item.payload, PayloadRef::Inline { data: Vec::new() });
     item.payload = match primary {
-        PayloadRef::Inline { data } => store_payload(&data, blobs, opts)?,
+        PayloadRef::Inline { data } => {
+            // Preserve a bounded searchable excerpt when a large text payload spills to a blob.
+            if data.len() > opts.inline_limit && item.kind != ItemKind::Image {
+                let s = String::from_utf8_lossy(&data);
+                let max_bytes = 8 * 1024;
+                let mut cut = s.len().min(max_bytes);
+                while cut > 0 && !s.is_char_boundary(cut) {
+                    cut -= 1;
+                }
+                if cut > 0 {
+                    item.search_excerpt = Some(s[..cut].to_string());
+                }
+            }
+            store_payload(&data, blobs, opts)?
+        }
         other => other,
     };
     store_flavors(&mut item, &snap, blobs, opts)?;
-    item.byte_size += item.payload.size();
+    if item.byte_size == 0 {
+        item.byte_size = item.payload.size();
+    }
     item.source = snap.source.clone();
     Ok(Some(item))
 }

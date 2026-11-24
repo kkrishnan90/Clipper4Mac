@@ -210,7 +210,7 @@ impl From<core::ItemSummary> for ItemSummary {
             id: s.id,
             kind: s.kind.into(),
             title: s.title,
-            has_thumbnail: s.thumbnail.is_some(),
+            has_thumbnail: s.has_thumbnail,
             image: s.image.map(Into::into),
             files: s.files.into_iter().map(Into::into).collect(),
             color: s.color,
@@ -556,6 +556,17 @@ impl Clipper {
 
     pub fn delete(&self, id: u64) -> FfiResult<()> {
         Ok(self.history.delete(id)?)
+    }
+
+    /// Restores the most recently deleted item, if available.
+    pub fn undo_delete(&self) -> FfiResult<Option<ItemSummary>> {
+        Ok(self.history.undo_delete()?.map(Into::into))
+    }
+
+    /// Sweeps orphaned blob files on disk (intended to run off the main thread
+    /// shortly after launch).
+    pub fn sweep_orphans(&self) {
+        self.history.sweep_orphans();
     }
 
     /// Removes every item (or every unpinned item). Returns how many went.

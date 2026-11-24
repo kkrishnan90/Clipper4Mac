@@ -17,66 +17,137 @@ pub struct Haystack<'a> {
     pub extra: Vec<&'a str>,
 }
 
+/// Fast case + Latin diacritic folding so `café` matches `cafe` and `résumé`
+/// matches `resume`. Pure ASCII strings take a single-pass fast path.
+pub fn fold(s: &str) -> String {
+    if s.is_ascii() {
+        return s.to_ascii_lowercase();
+    }
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        if ch.is_ascii() {
+            out.push(ch.to_ascii_lowercase());
+            continue;
+        }
+        for lc in ch.to_lowercase() {
+            let folded = match lc {
+                'à' | 'á' | 'â' | 'ã' | 'ä' | 'å' | 'ā' | 'ă' | 'ą' => 'a',
+                'ç' | 'ć' | 'ĉ' | 'ċ' | 'č' => 'c',
+                'ď' | 'đ' => 'd',
+                'è' | 'é' | 'ê' | 'ë' | 'ē' | 'ĕ' | 'ė' | 'ę' | 'ě' => 'e',
+                'ĝ' | 'ğ' | 'ġ' | 'ģ' => 'g',
+                'ĥ' | 'ħ' => 'h',
+                'ì' | 'í' | 'î' | 'ï' | 'ĩ' | 'ī' | 'ĭ' | 'į' | 'ı' => 'i',
+                'ĵ' => 'j',
+                'ķ' => 'k',
+                'ĺ' | 'ļ' | 'ľ' | 'ŀ' | 'ł' => 'l',
+                'ñ' | 'ń' | 'ņ' | 'ň' => 'n',
+                'ò' | 'ó' | 'ô' | 'õ' | 'ö' | 'ø' | 'ō' | 'ŏ' | 'ő' => 'o',
+                'ŕ' | 'ŗ' | 'ř' => 'r',
+                'ś' | 'ŝ' | 'ş' | 'š' => 's',
+                'ţ' | 'ť' | 'ŧ' => 't',
+                'ù' | 'ú' | 'û' | 'ü' | 'ũ' | 'ū' | 'ŭ' | 'ů' | 'ű' | 'ų' => 'u',
+                'ŵ' => 'w',
+                'ý' | 'ÿ' | 'ŷ' => 'y',
+                'ź' | 'ż' | 'ž' => 'z',
+                other => other,
+            };
+            out.push(folded);
+        }
+    }
+    out
+}
+
+/// Pre-folded search query reused across every item in a `list()` pass.
+#[derive(Debug, Clone)]
+pub struct PreparedQuery {
+    folded: String,
+    tokens: Vec<String>,
+    char_count: usize,
+}
+
+impl PreparedQuery {
+    pub fn new(query: &str) -> Self {
+        let folded = fold(query.trim());
+        let tokens = folded.split_whitespace().map(str::to_string).collect();
+        let char_count = folded.chars().count();
+        PreparedQuery {
+            folded,
+            tokens,
+            char_count,
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.folded.is_empty()
+    }
+
+    /// Returns `None` if the query doesn't match at all.
+    pub fn score(&self, hay: &Haystack<'_>) -> Option<i32> {
+        if self.folded.is_empty() {
+            return Some(0);
+        }
+        let ql = self.folded.as_str();
+        let title = fold(hay.title);
+
+        let mut best: Option<i32> = None;
+        let mut bump = |s: i32| {
+            best = Some(best.map_or(s, |b| b.max(s)));
+        };
+
+        if let Some(pos) = title.find(ql) {
+            let word_start = pos == 0
+                || !title[..pos]
+                    .chars()
+                    .last()
+                    .is_some_and(|c| c.is_alphanumeric());
+            bump(1000 - pos.min(500) as i32 + if word_start { 100 } else { 0 });
+        }
+        let mut folded_body: Option<String> = None;
+        if let Some(body) = hay.body {
+            let fb = fold(body);
+            if let Some(pos) = fb.find(ql) {
+                bump(600 - (pos / 16).min(300) as i32);
+            }
+            folded_body = Some(fb);
+        }
+        let mut folded_extra: Vec<String> = Vec::new();
+        for e in &hay.extra {
+            let fe = fold(e);
+            if fe.contains(ql) {
+                bump(500);
+            }
+            folded_extra.push(fe);
+        }
+        if best.is_some() {
+            return best;
+        }
+
+        // Multi-token AND match across all fields (reusing already-folded strings).
+        if self.tokens.len() > 1 {
+            let matches_all = self.tokens.iter().all(|tok| {
+                title.contains(tok.as_str())
+                    || folded_body.as_deref().is_some_and(|b| b.contains(tok.as_str()))
+                    || folded_extra.iter().any(|e| e.contains(tok.as_str()))
+            });
+            if matches_all {
+                return Some(300);
+            }
+        }
+
+        // Subsequence on the title.
+        if self.char_count >= 2 {
+            if let Some(gap) = subsequence_gap(ql, &title) {
+                return Some(200 - gap.min(150) as i32);
+            }
+        }
+        None
+    }
+}
+
 /// Returns `None` if the query doesn't match at all.
 pub fn score(query: &str, hay: &Haystack<'_>) -> Option<i32> {
-    let q = query.trim();
-    if q.is_empty() {
-        return Some(0);
-    }
-    let ql = q.to_lowercase();
-    let title = hay.title.to_lowercase();
-
-    let mut best: Option<i32> = None;
-    let mut bump = |s: i32| {
-        best = Some(best.map_or(s, |b| b.max(s)));
-    };
-
-    if let Some(pos) = title.find(&ql) {
-        let word_start = pos == 0
-            || !title[..pos]
-                .chars()
-                .last()
-                .is_some_and(|c| c.is_alphanumeric());
-        bump(1000 - pos.min(500) as i32 + if word_start { 100 } else { 0 });
-    }
-    if let Some(body) = hay.body {
-        if let Some(pos) = body.to_lowercase().find(&ql) {
-            bump(600 - (pos / 16).min(300) as i32);
-        }
-    }
-    for e in &hay.extra {
-        if e.to_lowercase().contains(&ql) {
-            bump(500);
-        }
-    }
-    if best.is_some() {
-        return best;
-    }
-
-    // Multi-token AND match across all fields.
-    let tokens: Vec<&str> = ql.split_whitespace().collect();
-    if tokens.len() > 1 {
-        let mut all = title.clone();
-        if let Some(b) = hay.body {
-            all.push(' ');
-            all.push_str(&b.to_lowercase());
-        }
-        for e in &hay.extra {
-            all.push(' ');
-            all.push_str(&e.to_lowercase());
-        }
-        if tokens.iter().all(|t| all.contains(t)) {
-            return Some(300);
-        }
-    }
-
-    // Subsequence on the title.
-    if ql.chars().count() >= 2 {
-        if let Some(gap) = subsequence_gap(&ql, &title) {
-            return Some(200 - gap.min(150) as i32);
-        }
-    }
-    None
+    PreparedQuery::new(query).score(hay)
 }
 
 /// If every char of `needle` appears in order in `hay`, returns the total gap

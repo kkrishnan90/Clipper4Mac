@@ -18,7 +18,7 @@ struct SettingsView: View {
             IgnoreTab()
                 .tabItem { Label("Ignore", systemImage: "nosign") }
         }
-        .frame(width: 520, height: 420)
+        .frame(width: 520, height: 440)
     }
 }
 
@@ -26,6 +26,7 @@ private struct GeneralTab: View {
     @State private var launchAtLogin = AppDelegate.launchAtLogin
     @AppStorage(PrefKey.pasteOnSelect) private var pasteOnSelect = true
     @AppStorage(PrefKey.pastePlainByDefault) private var pastePlainByDefault = false
+    @AppStorage(PrefKey.zeroBlurMode) private var zeroBlurMode = true
     @AppStorage(PrefKey.clearOnQuit) private var clearOnQuit = false
     @State private var accessibilityGranted = Paster.isTrusted
 
@@ -48,10 +49,13 @@ private struct GeneralTab: View {
                 Toggle("Paste without formatting by default", isOn: $pastePlainByDefault)
                 Text("Hold ⌥ while selecting to invert. Clipper always stores every format, so nothing is lost either way.")
                     .font(.caption).foregroundStyle(.secondary)
-                if pasteOnSelect, !accessibilityGranted {
+                Toggle("Keep active input focused (Zero-Blur mode)", isOn: $zeroBlurMode)
+                Text("Prevents browsers, IDEs, and Slack inputs from losing focus when Clipper opens. Requires Accessibility permission.")
+                    .font(.caption).foregroundStyle(.secondary)
+                if (pasteOnSelect || zeroBlurMode), !accessibilityGranted {
                     HStack {
                         Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.yellow)
-                        Text("Pasting needs Accessibility permission.")
+                        Text("Auto-paste, caret positioning, and Zero-Blur need Accessibility permission.")
                         Spacer()
                         Button("Open System Settings…") {
                             Paster.requestAccessibility()
@@ -69,13 +73,14 @@ private struct GeneralTab: View {
 }
 
 private struct AppearanceTab: View {
-    @AppStorage(PrefKey.popupPosition) private var popupPosition = PopupPosition.cursor.rawValue
+    @AppStorage(PrefKey.popupPosition) private var popupPosition = PopupPosition.caret.rawValue
     @AppStorage(PrefKey.menuIcon) private var menuIcon = MenuIcon.paperclip.rawValue
     @AppStorage(PrefKey.showApplicationIcons) private var showAppIcons = false
     @AppStorage(PrefKey.showSearch) private var showSearch = true
+    @AppStorage(PrefKey.showFilterBar) private var showFilterBar = true
     @AppStorage(PrefKey.showFooter) private var showFooter = true
     @AppStorage(PrefKey.showPreview) private var showPreview = true
-    @AppStorage(PrefKey.previewDelayMs) private var previewDelayMs = 1500
+    @AppStorage(PrefKey.previewDelayMs) private var previewDelayMs = 600
     @AppStorage(PrefKey.imageMaxHeight) private var imageMaxHeight = 40
 
     var body: some View {
@@ -92,6 +97,7 @@ private struct AppearanceTab: View {
             }
             Section {
                 Toggle("Show search field", isOn: $showSearch)
+                Toggle("Show type filter bar (Tab to cycle)", isOn: $showFilterBar)
                 Toggle("Show footer", isOn: $showFooter)
                 Toggle("Show application icons", isOn: $showAppIcons)
                 Stepper("Image row height: \(imageMaxHeight) pt", value: $imageMaxHeight, in: 20...120, step: 10)
@@ -101,7 +107,7 @@ private struct AppearanceTab: View {
                 if showPreview {
                     Stepper(
                         "Preview delay: \(Double(previewDelayMs) / 1000, specifier: "%.1f") s",
-                        value: $previewDelayMs, in: 0...5000, step: 250
+                        value: $previewDelayMs, in: 0...5000, step: 200
                     )
                 }
             }

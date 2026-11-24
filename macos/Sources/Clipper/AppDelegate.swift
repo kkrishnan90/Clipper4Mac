@@ -14,6 +14,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var statusItem: NSStatusItem?
     private var panel: FloatingPanel<ContentView>?
+    private var previewPanel: PreviewPanel?
+    private let zeroBlurInterceptor = ZeroBlurKeyInterceptor()
     private var keyMonitor: Any?
     private var flagsMonitor: Any?
     private var defaultsObserver: NSObjectProtocol?
@@ -49,6 +51,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        zeroBlurInterceptor.stop()
         if UserDefaults.standard.bool(forKey: PrefKey.clearOnQuit) {
             core.clear(keepPinned: true)
         }
@@ -74,12 +77,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func updateStatusIcon() {
+    func updateStatusIcon() {
         let raw = UserDefaults.standard.string(forKey: PrefKey.menuIcon) ?? MenuIcon.paperclip.rawValue
         let icon = MenuIcon(rawValue: raw) ?? .paperclip
         let image = NSImage(systemSymbolName: icon.symbolName, accessibilityDescription: "Clipper")
         image?.isTemplate = true
         statusItem?.button?.image = image
+        // Visually dim the icon when recording is paused so users never forget!
+        statusItem?.button?.appearsDisabled = watcher.isPaused
+        statusItem?.button?.toolTip = watcher.isPaused ? "Clipper (Paused)" : "Clipper"
     }
 
     @objc private func statusItemClicked(_ sender: NSStatusBarButton) {
@@ -113,14 +119,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func openFromMenu() { togglePopup(at: .statusItem) }
     @objc private func openPreferencesFromMenu() { openPreferences() }
     @objc private func showAboutFromMenu() { showAbout() }
-    @objc private func togglePause() { watcher.isPaused.toggle() }
 
-    // MARK: Panel
+    @objc func togglePause() {
+        watcher.isPaused.toggle()
+        model.isRecordingPaused = watcher.isPaused
+        updateStatusIcon()
+    }
+
+    // MARK: Panel & PreviewPanel
 
     private func setupPanel() {
         let d = UserDefaults.standard
-        let width = max(300, d.double(forKey: PrefKey.windowWidth))
-        let height = max(300, d.double(forKey: PrefKey.windowHeight))
+        let width = max(320, d.double(forKey: PrefKey.windowWidth))
+        let height = max(240, d.double(forKey: PrefKey.windowHeight))
+
+        let preview = PreviewPanel(core: core)
+        self.previewPanel = preview
+        preview.onPointerExited = { [weak self] in
+            guard let self, let panel = self.panel, panel.isPresented else { return }
+            // Hide hover-opened preview when leaving the preview panel unless
+            // the pointer moved back onto the main panel.
+            if !panel.frame.insetBy(dx: -8, dy: -8).contains(NSEvent.mouseLocation) {
+                self.model.handleListHoverExit()
+            }
+        }
+
         let panel = FloatingPanel(
             contentRect: NSRect(x: 0, y: 0, width: width, height: height),
             statusBarButton: statusItem?.button,
@@ -128,27 +151,130 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ) { [model] in
             ContentView(model: model)
         }
-        panel.minSize = NSSize(width: 300, height: 200)
+        panel.minSize = NSSize(width: 300, height: 180)
+        panel.siblingPreviewPanel = preview
         self.panel = panel
-        model.dismiss = { [weak self] in self?.panel?.close() }
+
+        model.dismiss = { [weak self] restoreFocus in
+            self?.panel?.dismissPanel(restoreFocus: restoreFocus)
+        }
+        model.onPreviewChanged = { [weak self] item in
+            guard let self, let panel = self.panel, panel.isPresented else {
+                self?.previewPanel?.hide()
+                return
+            }
+            if let item {
+                self.previewPanel?.show(item: item, beside: panel)
+            } else {
+                self.previewPanel?.hide()
+            }
+        }
+        model.onRequestResize = { [weak self] in
+            guard let self, let panel = self.panel, panel.isPresented else { return }
+            let target = self.idealPanelHeight()
+            panel.verticallyResize(to: target, animated: true)
+        }
+        model.onPromoteToKeyWindow = { [weak self] in
+            guard let self, let panel = self.panel, panel.isPresented else { return }
+            // Stop Zero-Blur tap so native AppKit text field receives IME/selection events cleanly.
+            self.zeroBlurInterceptor.stop()
+            self.model.isZeroBlurActive = false
+            panel.promoteToKeyWindow()
+            self.model.requestSearchFocus()
+        }
+        model.getPreviousApp = { [weak self] in
+            self?.panel?.previousApp
+        }
+        model.isPointerOverPreview = { [weak self] in
+            guard let preview = self?.previewPanel, preview.isVisible else { return false }
+            return preview.frame.insetBy(dx: -12, dy: -12).contains(NSEvent.mouseLocation)
+        }
+    }
+
+    /// Computes a compact height fitted to the current item count, capped at
+    /// the user's preferred maximum height (default 460 pt instead of 800 pt).
+    private func idealPanelHeight() -> CGFloat {
+        let d = UserDefaults.standard
+        let maxHeight = max(340, min(720, d.double(forKey: PrefKey.windowHeight)))
+        let showSearch = d.bool(forKey: PrefKey.showSearch)
+        let showFilter = d.bool(forKey: PrefKey.showFilterBar)
+        let showFooter = d.bool(forKey: PrefKey.showFooter)
+        let imageRowHeight = CGFloat(max(22, d.integer(forKey: PrefKey.imageMaxHeight))) + 8
+
+        var chrome: CGFloat = 12 // list vertical padding + dividers
+        if showSearch { chrome += 44 }
+        if showFilter { chrome += 30 }
+        if showFooter { chrome += 98 }
+        let needsAXBanner = !Paster.isTrusted && (
+            d.bool(forKey: PrefKey.pasteOnSelect)
+            || d.bool(forKey: PrefKey.zeroBlurMode)
+            || (d.string(forKey: PrefKey.popupPosition) ?? PopupPosition.caret.rawValue) == PopupPosition.caret.rawValue
+        )
+        if watcher.isPaused || needsAXBanner {
+            chrome += 28
+        }
+        if model.undoBannerTitle != nil { chrome += 30 }
+
+        let listHeight: CGFloat
+        if model.items.isEmpty {
+            listHeight = 68
+        } else {
+            var sum: CGFloat = 0
+            for item in model.items.prefix(30) {
+                sum += (item.kind == .image && item.hasThumbnail) ? imageRowHeight : 26
+                if sum + chrome >= maxHeight { break }
+            }
+            if model.pinnedEndId != nil { sum += 9 }
+            listHeight = max(52, sum)
+        }
+
+        return min(CGFloat(maxHeight), max(180, chrome + listHeight))
     }
 
     func togglePopup(at requested: PopupPosition? = nil) {
         guard let panel else { return }
         if panel.isPresented {
-            panel.close()
+            panel.dismissPanel(restoreFocus: true)
             return
         }
-        model.reload(keepSelection: false)
-        model.query = ""
-        let raw = UserDefaults.standard.string(forKey: PrefKey.popupPosition) ?? PopupPosition.cursor.rawValue
-        let position = requested ?? PopupPosition(rawValue: raw) ?? .cursor
-        panel.open(height: max(300, UserDefaults.standard.double(forKey: PrefKey.windowHeight)), at: position)
+
+        let d = UserDefaults.standard
+        let raw = d.string(forKey: PrefKey.popupPosition) ?? PopupPosition.caret.rawValue
+        let position = requested ?? PopupPosition(rawValue: raw) ?? .caret
+
+        // Attempt Zero-Blur Mode (keeps host app's text input completely focused!)
+        // when enabled and Accessibility is trusted.
+        let wantZeroBlur = d.bool(forKey: PrefKey.zeroBlurMode) && Paster.isTrusted
+        var zeroBlurActive = false
+        if wantZeroBlur {
+            zeroBlurActive = zeroBlurInterceptor.start(
+                onKeyDown: { [weak self] event in
+                    guard let self, let panel = self.panel, panel.isPresented else { return false }
+                    return self.model.handle(event, zeroBlurTextCapture: true)
+                },
+                onFlagsChanged: { [weak self] flags in
+                    guard let self, let panel = self.panel, panel.isPresented else { return }
+                    self.model.shiftDown = flags.contains(.shift)
+                    self.model.optionDown = flags.contains(.option)
+                }
+            )
+        }
+
+        // Single clean reset + reload BEFORE computing ideal height & opening.
+        // Clicking the menu bar icon starts with no row pre-highlighted (native
+        // menu feel); pressing the global hotkey pre-selects item #1 for instant ⏎.
+        let openedByMouse = (requested == .statusItem)
+        model.prepareForOpen(zeroBlur: zeroBlurActive, openedByMouse: openedByMouse)
+
+        let width = max(320, d.double(forKey: PrefKey.windowWidth))
+        let height = idealPanelHeight()
+        panel.open(width: width, height: height, at: position, zeroBlur: zeroBlurActive)
     }
 
     private func panelDidClose() {
-        model.previewedId = nil
-        model.shiftDown = false
+        zeroBlurInterceptor.stop()
+        previewPanel?.hide()
+        model.handlePanelClosed()
         if let panel {
             UserDefaults.standard.set(panel.frame.origin.x, forKey: PrefKey.lastX)
             UserDefaults.standard.set(panel.frame.origin.y, forKey: PrefKey.lastY)
@@ -175,15 +301,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func setupMonitors() {
-        // Key events while our panel is key never reach SwiftUI's focus
-        // system first, so route them through the model (arrows, ⏎, ⌘n…).
+        // Local monitors handle key events when the panel IS key (standard mode
+        // or after the user clicked into the Search field).
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self, let panel = self.panel, panel.isPresented, event.window === panel else { return event }
-            return self.model.handle(event) ? nil : event
+            return self.model.handle(event, zeroBlurTextCapture: false) ? nil : event
         }
         flagsMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
             guard let self, let panel = self.panel, panel.isPresented else { return event }
-            self.model.shiftDown = event.modifierFlags.contains(.shift)
+            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            self.model.shiftDown = flags.contains(.shift)
+            self.model.optionDown = flags.contains(.option)
             return event
         }
     }

@@ -9,6 +9,9 @@ use crate::{CoreError, Result};
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static TMP_NONCE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone)]
 pub struct BlobStore {
@@ -50,7 +53,8 @@ impl BlobStore {
         if let Some(parent) = final_path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let tmp = final_path.with_extension(format!("tmp-{}", std::process::id()));
+        let nonce = TMP_NONCE.fetch_add(1, Ordering::Relaxed);
+        let tmp = final_path.with_extension(format!("tmp-{}-{nonce}", std::process::id()));
         {
             let mut f = fs::File::create(&tmp)?;
             f.write_all(bytes)?;

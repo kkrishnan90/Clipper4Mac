@@ -55,8 +55,9 @@ impl Store {
 
     fn open_inner(path: &Path) -> Result<Database> {
         let mut builder = Database::builder();
-        // 32 MiB page cache is plenty for metadata-only records.
-        builder.set_cache_size(32 * 1024 * 1024);
+        // 4 MiB page cache is plenty for metadata-only records since the live
+        // index is already held in memory.
+        builder.set_cache_size(4 * 1024 * 1024);
         builder.set_repair_callback(|session| {
             log::warn!(
                 "redb repairing history database ({:.0}% done)",
@@ -90,6 +91,28 @@ impl Store {
         };
         txn.commit()?;
         Ok(id)
+    }
+
+    /// Allocates a fresh id and inserts `item` (plus its hash index entry) in
+    /// a single atomic write transaction (one fsync instead of two).
+    pub fn put_new(&self, item: &mut Item) -> Result<()> {
+        let txn = self.db.begin_write()?;
+        let id = {
+            let mut meta = txn.open_table(META)?;
+            let current = meta.get(META_NEXT_ID)?.map(|g| g.value()).unwrap_or(1);
+            meta.insert(META_NEXT_ID, current + 1)?;
+            current
+        };
+        item.id = id;
+        let json = serde_json::to_string(item)?;
+        {
+            let mut items = txn.open_table(ITEMS)?;
+            let mut hashes = txn.open_table(HASHES)?;
+            items.insert(item.id, json.as_str())?;
+            hashes.insert(item.hash.as_str(), item.id)?;
+        }
+        txn.commit()?;
+        Ok(())
     }
 
     /// Inserts or replaces an item (and its hash index entry) atomically.
@@ -258,6 +281,7 @@ mod tests {
             },
             representations: vec![],
             thumbnail: None,
+            search_excerpt: None,
             image: None,
             files: vec![],
             color: None,

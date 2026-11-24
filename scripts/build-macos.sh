@@ -128,6 +128,7 @@ if [[ $INSTALL == 1 ]]; then
   osascript -e 'tell application "Clipper" to quit' 2>/dev/null || true
   rm -rf /Applications/Clipper.app
   cp -R "$APP" /Applications/Clipper.app
+  chmod -R u+w /Applications/Clipper.app
   [[ $IDENTITY == "-" ]] && xattr -cr /Applications/Clipper.app
   open /Applications/Clipper.app
   echo "✓ Clipper is in your menu bar. Press ⇧⌘V."

@@ -5,6 +5,9 @@ import ClipperCore
 
 /// Writes history items back to the pasteboard and optionally simulates ⌘V.
 enum Paster {
+    private static var cachedVKeyCode: UInt16?
+    private static var inputSourceObserverInstalled = false
+
     /// Puts every captured flavour back on the pasteboard, byte-for-byte and
     /// in the original order. File URLs go through `writeObjects` so multiple
     /// files paste correctly in Finder (same trick as Maccy); all other
@@ -41,16 +44,62 @@ enum Paster {
         _ = AXIsProcessTrustedWithOptions(options)
     }
 
+    /// Posts ⌘V once `targetApp` is actually frontmost (or almost immediately
+    /// when Zero-Blur Mode never took key window away from it).
+    @MainActor
+    static func pasteWhenReady(targetApp: NSRunningApplication?, zeroBlur: Bool) {
+        guard isTrusted else {
+            requestAccessibility()
+            return
+        }
+
+        if zeroBlur {
+            // Host app never lost key status; a tiny 15 ms beat lets the
+            // pasteboard commit settle before ⌘V arrives.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.015) {
+                _ = pressCommandV()
+            }
+            return
+        }
+
+        // Standard key-panel mode: ensure targetApp has regained focus before
+        // sending ⌘V instead of guessing with a blind sleep.
+        let targetPID = targetApp?.processIdentifier
+        if let app = targetApp, !app.isTerminated,
+           NSWorkspace.shared.frontmostApplication?.processIdentifier != targetPID {
+            app.activate(options: [])
+        }
+        pollAndPaste(targetPID: targetPID, attemptsRemaining: 15)
+    }
+
+    @MainActor
+    private static func pollAndPaste(targetPID: pid_t?, attemptsRemaining: Int) {
+        let frontPID = NSWorkspace.shared.frontmostApplication?.processIdentifier
+        let ready = targetPID == nil || frontPID == targetPID || attemptsRemaining <= 0
+        if ready {
+            // Brief settle beat for WindowServer key-window handoff.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) {
+                _ = pressCommandV()
+            }
+        } else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.01) {
+                pollAndPaste(targetPID: targetPID, attemptsRemaining: attemptsRemaining - 1)
+            }
+        }
+    }
+
     /// Simulates ⌘V in the frontmost app. Returns `false` when Accessibility
     /// permission is missing (the content is still on the pasteboard).
+    @MainActor
     @discardableResult
     static func pressCommandV() -> Bool {
         guard isTrusted else { return false }
-        // Keycode for `v` on the current keyboard layout (falls back to ANSI).
-        let keyCode = CGKeyCode(keyCodeForV() ?? UInt16(kVK_ANSI_V))
-        guard let source = CGEventSource(stateID: .combinedSessionState) else { return false }
-        // Don't let our synthetic event be swallowed while the user still
-        // holds the hotkey's modifiers.
+        let keyCode = CGKeyCode(resolvedKeyCodeForV())
+        // `.privateState` isolates the synthetic ⌘V from any physical modifier
+        // the user is still lifting (e.g. ⌥ from ⌥⏎ or ⇧ from ⇧⌘V).
+        guard let source = CGEventSource(stateID: .privateState)
+            ?? CGEventSource(stateID: .combinedSessionState)
+        else { return false }
         source.setLocalEventsFilterDuringSuppressionState(
             [.permitLocalMouseEvents, .permitSystemDefinedEvents],
             state: .eventSuppressionStateSuppressionInterval
@@ -58,11 +107,32 @@ enum Paster {
         guard let down = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: true),
               let up = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: false)
         else { return false }
-        down.flags = .maskCommand
-        up.flags = .maskCommand
+        // Include NX_DEVICELCMDKEYMASK (0x000008) like Maccy for Chromium,
+        // Electron, Java, and remote-desktop compatibility.
+        let cmdFlags = CGEventFlags(rawValue: CGEventFlags.maskCommand.rawValue | 0x000008)
+        down.flags = cmdFlags
+        up.flags = cmdFlags
         down.post(tap: .cgSessionEventTap)
         up.post(tap: .cgSessionEventTap)
         return true
+    }
+
+    @MainActor
+    private static func resolvedKeyCodeForV() -> UInt16 {
+        if !inputSourceObserverInstalled {
+            inputSourceObserverInstalled = true
+            DistributedNotificationCenter.default().addObserver(
+                forName: NSNotification.Name(kTISNotifySelectedKeyboardInputSourceChanged as String),
+                object: nil,
+                queue: .main
+            ) { _ in
+                Task { @MainActor in cachedVKeyCode = nil }
+            }
+        }
+        if let cached = cachedVKeyCode { return cached }
+        let code = keyCodeForV() ?? UInt16(kVK_ANSI_V)
+        cachedVKeyCode = code
+        return code
     }
 
     /// Looks up the virtual key that produces "v" on the active input source.
